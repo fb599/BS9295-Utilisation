@@ -48,8 +48,8 @@ crown_depths = [0.675, 0.775, 0.875, 0.975, 1.075, 1.175, 1.275, 1.375, 1.575, 1
 surcharge_pressure = [690, 480, 340, 245, 185, 140, 110, 95, 75, 65, 50, 40, 25, 15]
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="PE100 Pipe Design Tool", layout="wide")
-st.title("PE100 Pipe Structural Design Calculator")
+st.set_page_config(page_title="PE80/100 Pipe Design Tool SDR11/17", layout="wide")
+st.title("PE80/100 SDR11/17 Pipe Structural Design Calculator")
 
 # --- Sidebar with adjustable parameters ---
 with st.sidebar:
@@ -166,16 +166,25 @@ def calculate_all_checks(pipe_dict, depths, surcharges):
                     util_checks.append(buckling_air_util)
                 
                 max_util = max(util_checks)
-                overall_status = 101 if max_util > 1.0 else max_util * 100
+                overall_status = "FAIL (101%)" if max_util > 1.0 else f"PASS ({max_util*100:.1f}%)"
+                
+                # Format individual checks
+                oval_display = f"FAIL ({oval_percent:.1f}%)" if oval_util > 1 else f"PASS ({oval_percent:.1f}%)"
+                flotation_display = f"FAIL ({flotation_util*100:.1f}%)" if flotation_util > 1 else f"PASS ({flotation_util*100:.1f}%)"
+                buckling_soil_display = f"FAIL ({buckling_soil_util*100:.1f}%)" if buckling_soil_util > 1 else f"PASS ({buckling_soil_util*100:.1f}%)"
+                buckling_air_display = ""
+                if depth < 1.5:
+                    buckling_air_display = f"FAIL ({buckling_air_util*100:.1f}%)" if buckling_air_util > 1 else f"PASS ({buckling_air_util*100:.1f}%)"
                 
                 results.append({
                     "Diameter (mm)": dia,
                     "SDR Type": sdr_type,
                     "Crown Depth (m)": depth,
-                    "Ovalisation (%)": oval_percent,
-                    "Overall Utilisation (%)": overall_status,
-                    "Flotation Util (%)": flotation_util * 100,
-                    "Buckling Soil Util (%)": buckling_soil_util * 100,
+                    "Ovalisation": oval_display,
+                    "Flotation": flotation_display,
+                    "Buckling (Soil)": buckling_soil_display,
+                    "Buckling (Air)": buckling_air_display if depth < 1.5 else "N/A",
+                    "Overall Status": overall_status,
                     "Tamping Safe": "YES" if depth >= DEFAULT_TAMPING_DEPTH else "NO"
                 })
     return pd.DataFrame(results)
@@ -188,20 +197,62 @@ if st.button("Run Design Checks"):
         df = calculate_all_checks(pipe_data, crown_depths, surcharge_pressure)
     
     st.success("✅ Calculations completed.")
-    st.dataframe(df.style.format({
-        "Ovalisation (%)": "{:.2f}",
-        "Overall Utilisation (%)": "{:.1f}",
-        "Flotation Util (%)": "{:.1f}",
-        "Buckling Soil Util (%)": "{:.1f}"
-    }))
+    
+    # Display results in a more organized way
+    st.subheader("Design Results Summary")
+    
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["Detailed Results", "Summary by Diameter"])
+    
+    with tab1:
+        st.dataframe(df)
+    
+    with tab2:
+        # Pivot the data for a better summary view
+        summary_df = df.pivot_table(
+            index=["Diameter (mm)", "SDR Type"],
+            columns="Crown Depth (m)",
+            values="Overall Status",
+            aggfunc='first'
+        )
+        st.dataframe(summary_df)
     
     # Excel Export with error handling
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
+            # Main results sheet
+            df.to_excel(writer, index=False, sheet_name="Summary Results")
+            
+            # Additional sheets with detailed calculations
+            summary_df.to_excel(writer, sheet_name="Summary by Diameter")
+            
+            # Parameters sheet
+            params_df = pd.DataFrame({
+                "Parameter": [
+                    "Pipe Material", "Bedding Class", "Native Soil Modulus", 
+                    "Embedment Modulus", "Design Standard", "Ovalisation Limit",
+                    "Initial Ovalisation (SDR11)", "Initial Ovalisation (SDR17)",
+                    "Perforation Reduction", "Long-term Modulus", "Short-term Modulus",
+                    "Water Density", "Soil Density", "Uplift Partial Factor (unfav)",
+                    "Uplift Partial Factor (fav)", "Buckling FOS (soil)", 
+                    "Buckling FOS (air)", "Min Tamping Depth"
+                ],
+                "Value": [
+                    "PE100", "S2 (90% compaction)", f"{params['soil_modulus']} MN/m²",
+                    f"{params['embed_modulus']} MN/m²", "BS9295:2020", f"{params['oval_limit']}%",
+                    f"{INITIAL_OVAL[0]}%", f"{INITIAL_OVAL[1]}%", 
+                    f"{int((1-params['perforation_red'])*100}%", f"{DEFAULT_LONG_MODULUS} MPa",
+                    f"{DEFAULT_SHORT_MODULUS} MPa", f"{DEFAULT_WATER_DENSITY} kN/m³",
+                    f"{DEFAULT_SOIL_DENSITY} kN/m³", f"{DEFAULT_GAMMA_UF}",
+                    f"{DEFAULT_GAMMA_F}", f"{DEFAULT_BUCKLING_MIN_SAFE}",
+                    f"{DEFAULT_BUCKLING_MIN_SAFE_AIR}", f"{DEFAULT_TAMPING_DEPTH} m"
+                ]
+            })
+            params_df.to_excel(writer, index=False, sheet_name="Design Parameters")
+            
         st.download_button(
-            "📥 Download Excel Report",
+            "📥 Download Full Excel Report",
             data=buffer.getvalue(),
             file_name="Pipe_Design_Results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -215,11 +266,10 @@ if st.button("Run Design Checks"):
             mime="text/csv"
         )
 
-
 # git commands to save changes
 
 # git add .
 # git commit -m "Added adjustable parameters to Streamlit app and improved export functionality"
 # git push
 
-st.write("UPDATED")
+st.write("Note: 101(%) Overall Utilisation Denotes Failure")
