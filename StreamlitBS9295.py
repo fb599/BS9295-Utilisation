@@ -123,24 +123,14 @@ if st.button("Generate Summary Table"):
     st.success("✅ Summary generated.")
     st.dataframe(df, use_container_width=True)
 
-        # Excel Export with error handling
+    # Excel Export with error handling
     try:
         buffer = BytesIO()
-
-        # Make a copy to format utilisation cleanly
-        export_df = df.copy()
-        if "Overall Utilisation" in export_df.columns:
-            export_df["Overall Utilisation (%)"] = export_df["Overall Utilisation"].apply(
-                lambda x: f"{min(x * 100, 100.00):.2f}"
-            )
-            export_df.drop("Overall Utilisation", axis=1, inplace=True)
-
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            # Main results sheet
-            export_df.to_excel(writer, index=False, sheet_name="Summary Results")
+            df.to_excel(writer, index=False, sheet_name="Summary Results")
 
             # Optional additional summary
-            grouped = export_df.copy()
+            grouped = df.copy()
             grouped.to_excel(writer, sheet_name="Summary by Diameter", index=False)
 
             # Parameters sheet
@@ -182,8 +172,6 @@ if st.button("Generate Summary Table"):
             file_name="Pipe_Design_Results.csv",
             mime="text/csv"
         )
-
-
 
 # git commands to save changes
 
