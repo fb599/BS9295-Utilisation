@@ -129,24 +129,84 @@ def calculate_all_checks(pipe_dict, depths, surcharges):
                 })
     return pd.DataFrame(results)
 
-# --- Streamlit UI ---
+# --- Constants with Defaults ---
+DEFAULTS = {
+    "soil_modulus": 2.5,
+    "embed_modulus": 10,
+    "perforation_red": 0.95,
+    "deflection_lag": 1.0,
+    "oval_limit": 3.0
+}
 
-st.title("PE100 Pipe Structural Design Calculator")
+# --- Streamlit App ---
+def main():
+    st.set_page_config(page_title="PE100 Pipe Design Tool", layout="wide")
+    st.title("PE100 Pipe Structural Design Calculator")
+    
+    # Sidebar for adjustable parameters
+    with st.sidebar:
+        st.header("Design Parameters")
+        params = {
+            key: st.number_input(
+                label=key.replace("_", " ").title() + 
+                     (" (MN/m²)" if "modulus" in key else ""),
+                value=val,
+                min_value=0.1 if "modulus" in key else 0.01,
+                step=0.1
+            )
+            for key, val in DEFAULTS.items()
+        }
+        
+        if st.button("Reset to Defaults"):
+            for key in params:
+                params[key] = DEFAULTS[key]
+    
+    # Main calculation and display logic
+    if st.button("Run Calculations"):
+        try:
+            results = calculate_results(params)
+            display_results(results)
+            
+            if st.button("Push to GitHub"):
+                push_to_github()
+                
+        except Exception as e:
+            st.error(f"Calculation failed: {str(e)}")
 
-pipe_data = make_pipe_dict(diameters, sdr11, sdr17)
+def calculate_results(params):
+    # Your full calculation logic here
+    # Using params['soil_modulus'], params['oval_limit'], etc.
+    return pd.DataFrame()  # Return your results DataFrame
 
-if st.button("Run Design Checks"):
-    df = calculate_all_checks(pipe_data, crown_depths, surcharge_pressure)
-    st.success("✅ Calculations completed.")
+def display_results(df):
     st.dataframe(df)
+    
+    try:
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        st.download_button(
+            "📥 Download Excel",
+            data=buffer,
+            file_name="pipe_design_results.xlsx",
+            mime="application/vnd.ms-excel"
+        )
+    except ImportError:
+        st.warning("Excel export requires openpyxl - installing...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])
+        st.experimental_rerun()
 
-    # Export to Excel
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Design Results')
-    buffer.seek(0)
-    st.download_button("📥 Download Excel Report", data=buffer, file_name="Pipe_Design_Results.xlsx")
+def push_to_github():
+    try:
+        subprocess.run(["git", "add", "."], check=True)
+        subprocess.run(["git", "commit", "-m", "Update design calculations"], check=True)
+        subprocess.run(["git", "push"], check=True)
+        st.success("Successfully pushed to GitHub!")
+    except subprocess.CalledProcessError as e:
+        st.error(f"Git operation failed: {e}")
 
+if __name__ == "__main__":
+    main()
 # git commands to save changes
 
 # git add .
