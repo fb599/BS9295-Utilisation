@@ -242,13 +242,14 @@ if st.button("Run Design Checks"):
                     "PE100", "S2 (90% compaction)", f"{params['soil_modulus']} MN/m²",
                     f"{params['embed_modulus']} MN/m²", "BS9295:2020", f"{params['oval_limit']}%",
                     f"{INITIAL_OVAL[0]}%", f"{INITIAL_OVAL[1]}%", 
-                    f"{int((1-params['perforation_red'])*100)%", f"{DEFAULT_LONG_MODULUS} MPa",
+                    f"{int((1 - params['perforation_red']) * 100)}%", f"{DEFAULT_LONG_MODULUS} MPa",
                     f"{DEFAULT_SHORT_MODULUS} MPa", f"{DEFAULT_WATER_DENSITY} kN/m³",
                     f"{DEFAULT_SOIL_DENSITY} kN/m³", f"{DEFAULT_GAMMA_UF}",
                     f"{DEFAULT_GAMMA_F}", f"{DEFAULT_BUCKLING_MIN_SAFE}",
                     f"{DEFAULT_BUCKLING_MIN_SAFE_AIR}", f"{DEFAULT_TAMPING_DEPTH} m"
                 ]
             })
+
             params_df.to_excel(writer, index=False, sheet_name="Design Parameters")
             
         st.download_button(
