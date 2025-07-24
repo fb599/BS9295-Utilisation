@@ -147,3 +147,8 @@ if st.button("Run Design Checks"):
     buffer.seek(0)
     st.download_button("📥 Download Excel Report", data=buffer, file_name="Pipe_Design_Results.xlsx")
 
+# git commands to save changes
+
+# git add .
+# git commit -m "Added adjustable parameters to Streamlit app"
+# git push
