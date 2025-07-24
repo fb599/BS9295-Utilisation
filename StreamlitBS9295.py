@@ -48,62 +48,32 @@ crown_depths = [0.675, 0.775, 0.875, 0.975, 1.075, 1.175, 1.275, 1.375, 1.575, 1
 surcharge_pressure = [690, 480, 340, 245, 185, 140, 110, 95, 75, 65, 50, 40, 25, 15]
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="PE80/100 Pipe Design Tool SDR11/17", layout="wide")
-st.title("PE80/100 SDR11/17 Pipe Structural Design Calculator")
+st.set_page_config(page_title="PE Pipe Design Summary", layout="wide")
+st.title("PE80/100 SDR11/17 Pipe Design Summary Table")
 
-# --- Sidebar with adjustable parameters ---
+# --- Sidebar Parameters ---
 with st.sidebar:
     st.header("Design Parameters")
     params = {
-        "soil_modulus": st.number_input(
-            "Native Soil Modulus (MN/m²)",
-            value=DEFAULT_SOIL_MODULUS,
-            min_value=0.1,
-            max_value=100.0,
-            step=0.1
-        ),
-        "embed_modulus": st.number_input(
-            "Embedment Modulus (MN/m²)",
-            value=DEFAULT_EMBED_MODULUS,
-            min_value=0.1,
-            max_value=100.0,
-            step=0.1
-        ),
-        "deflection_lag": st.number_input(
-            "Deflection Lag Factor",
-            value=DEFAULT_DEFLECTION_LAG,
-            min_value=0.1,
-            max_value=2.0,
-            step=0.05
-        ),
-        "oval_limit": st.number_input(
-            "Ovalisation Limit (%)",
-            value=DEFAULT_OVAL_LIMIT,
-            min_value=1.0,
-            max_value=10.0,
-            step=0.1
-        ),
-        "perforation_red": st.number_input(
-            "Perforation Reduction Factor",
-            value=DEFAULT_PERFORATION_RED,
-            min_value=0.01,
-            max_value=1.0,
-            step=0.01
-        )
+        "soil_modulus": st.number_input("Native Soil Modulus (MN/m²)", value=DEFAULT_SOIL_MODULUS),
+        "embed_modulus": st.number_input("Embedment Modulus (MN/m²)", value=DEFAULT_EMBED_MODULUS),
+        "deflection_lag": st.number_input("Deflection Lag Factor", value=DEFAULT_DEFLECTION_LAG),
+        "oval_limit": st.number_input("Ovalisation Limit (%)", value=DEFAULT_OVAL_LIMIT),
+        "perforation_red": st.number_input("Perforation Reduction Factor", value=DEFAULT_PERFORATION_RED)
     }
 
-# --- Functions ---
+# --- Helper Functions ---
 def make_pipe_dict(diams, s11, s17):
     return {d: [s11[i], s17[i]] for i, d in enumerate(diams)}
 
 def get_pipe_weight(diameter, sdr_type):
     return PIPE_WEIGHTS.get((diameter, sdr_type), 0.16 if sdr_type == "SDR17" else 0.25)
 
-def pipe_stiffness(OD, t, modulus, perforated=True):
+def pipe_stiffness(OD, t, modulus):
     MD = OD - t
     I = t**3 / 12
     stiffness_val = (modulus * I) / (MD**3)
-    return stiffness_val * params.get("perforation_red", DEFAULT_PERFORATION_RED) if perforated else stiffness_val
+    return stiffness_val * params["perforation_red"]
 
 def leonhardt_factor(B_trench, D_pipe, E_soil, E_embed):
     ratio = B_trench / D_pipe
@@ -111,122 +81,58 @@ def leonhardt_factor(B_trench, D_pipe, E_soil, E_embed):
     denom = (1.985 - 0.456 * ratio) * (E_soil / E_embed) - (1 - ratio)
     return num / denom if denom != 0 else 1.0
 
-def ovalisation(total_pressure, stiffness, E_eff, sdr_idx):
+def calculate_utilisation(total_pressure, stiffness, E_eff, sdr_idx):
     numerator = DEFAULT_DEFLECTION_COEFF * params["deflection_lag"] * total_pressure
     denominator = 8 * stiffness + 0.061 * E_eff
     dynamic_oval = (numerator / denominator) * 100
-    return INITIAL_OVAL[sdr_idx] + dynamic_oval
+    total_oval = INITIAL_OVAL[sdr_idx] + dynamic_oval
+    utilisation = total_oval / params["oval_limit"]
+    return utilisation
 
-def calculate_flotation(dia, depth, pipe_weight, invert_level=None):
-    OD_m = dia / 1000
-    W_soil = DEFAULT_SOIL_DENSITY * depth * OD_m
-    W_total = DEFAULT_GAMMA_F * (pipe_weight + W_soil)
-    H_w = invert_level if invert_level is not None else depth + OD_m/2
-    UPL = DEFAULT_GAMMA_UF * DEFAULT_WATER_DENSITY * H_w * OD_m
-    return (UPL / W_total) * 100
+def calculate_table(pipe_dict, depths, surcharges):
+    rows = []
+    for i, depth in enumerate(depths):
+        surcharge = surcharges[i]
+        row_data = {
+            "Crown Depth (m)": depth,
+            "Below Sleeper (m)": round(depth - 0.175, 2),
+            "Tamping Safe": "YES" if depth >= DEFAULT_TAMPING_DEPTH else "NO",
+            "Surcharge (kN/m²)": surcharge
+        }
+        for dia, (sdr11_thk, sdr17_thk) in pipe_dict.items():
+            for sdr_idx, thickness in enumerate([sdr17_thk, sdr11_thk]):
+                sdr_type = "SDR17" if sdr_idx == 0 else "SDR11"
+                trench_width = dia + 300
+                stiffness = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS)
+                C_L = leonhardt_factor(trench_width, dia, params["soil_modulus"], params["embed_modulus"])
+                E_eff = params["embed_modulus"] * C_L * 1000
+                total_pressure = DEFAULT_SOIL_DENSITY * depth + surcharge
+                stiff_kN = stiffness * 1000
+                utilisation = calculate_utilisation(total_pressure, stiff_kN, E_eff, sdr_idx)
+                col_name = f"{dia} SDR{sdr_type[-2:]}"
+                row_data[col_name] = round(utilisation, 2)
+        rows.append(row_data)
+    return pd.DataFrame(rows)
 
-def calculate_all_checks(pipe_dict, depths, surcharges):
-    results = []
-    for dia, (sdr11_thk, sdr17_thk) in pipe_dict.items():
-        trench_width = dia + 300
-        C_L = leonhardt_factor(trench_width, dia, params["soil_modulus"], params["embed_modulus"])
-        E_eff = params["embed_modulus"] * C_L * 1000
-        
-        for sdr_idx, thickness in enumerate([sdr11_thk, sdr17_thk]):
-            sdr_type = "SDR11" if sdr_idx == 0 else "SDR17"
-            pipe_weight = get_pipe_weight(dia, sdr_type)
-            stiff_val = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS)
-            stiff_kN = stiff_val * 1000
-            stiff_buck_short = pipe_stiffness(dia, thickness, DEFAULT_SHORT_MODULUS, perforated=False)
-            stiff_buck_long = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS, perforated=False)
-            
-            for depth_idx, depth in enumerate(depths):
-                surcharge = surcharges[depth_idx]
-                soil_pressure = DEFAULT_SOIL_DENSITY * depth
-                total_pressure = soil_pressure + surcharge
-                oval_percent = ovalisation(total_pressure, stiff_kN, E_eff, sdr_idx)
-                oval_util = oval_percent / params["oval_limit"]
-                flotation_util = calculate_flotation(dia, depth, pipe_weight) / 100
-                buckling_air_util = 0
-                
-                if depth < 1.5:
-                    P_cr_a = 24 * stiff_buck_short * 1000
-                    FOS_air = P_cr_a / (soil_pressure + surcharge)
-                    buckling_air_util = DEFAULT_BUCKLING_MIN_SAFE_AIR / FOS_air
-                
-                P_cr_short = 0.6 * (E_eff/1000)**0.67 * stiff_buck_short**0.33
-                P_cr_long = 0.6 * (E_eff/1000)**0.67 * stiff_buck_long**0.33
-                P_cr_short_kN = P_cr_short * 1000
-                P_cr_long_kN = P_cr_long * 1000
-                FOS_soil = 1 / (soil_pressure/P_cr_long_kN + surcharge/P_cr_short_kN)
-                buckling_soil_util = DEFAULT_BUCKLING_MIN_SAFE / FOS_soil
-                
-                util_checks = [oval_util, flotation_util, buckling_soil_util]
-                if depth < 1.5:
-                    util_checks.append(buckling_air_util)
-                
-                max_util = max(util_checks)
-                overall_status = "FAIL (101%)" if max_util > 1.0 else f"PASS ({max_util*100:.1f}%)"
-                
-                # Format individual checks
-                oval_display = f"FAIL ({oval_percent:.1f}%)" if oval_util > 1 else f"PASS ({oval_percent:.1f}%)"
-                flotation_display = f"FAIL ({flotation_util*100:.1f}%)" if flotation_util > 1 else f"PASS ({flotation_util*100:.1f}%)"
-                buckling_soil_display = f"FAIL ({buckling_soil_util*100:.1f}%)" if buckling_soil_util > 1 else f"PASS ({buckling_soil_util*100:.1f}%)"
-                buckling_air_display = ""
-                if depth < 1.5:
-                    buckling_air_display = f"FAIL ({buckling_air_util*100:.1f}%)" if buckling_air_util > 1 else f"PASS ({buckling_air_util*100:.1f}%)"
-                
-                results.append({
-                    "Diameter (mm)": dia,
-                    "SDR Type": sdr_type,
-                    "Crown Depth (m)": depth,
-                    "Ovalisation": oval_display,
-                    "Flotation": flotation_display,
-                    "Buckling (Soil)": buckling_soil_display,
-                    "Buckling (Air)": buckling_air_display if depth < 1.5 else "N/A",
-                    "Overall Status": overall_status,
-                    "Tamping Safe": "YES" if depth >= DEFAULT_TAMPING_DEPTH else "NO"
-                })
-    return pd.DataFrame(results)
+# --- Main Execution ---
+if st.button("Generate Summary Table"):
+    with st.spinner("Calculating utilisation..."):
+        pipe_dict = make_pipe_dict(diameters, sdr11, sdr17)
+        df = calculate_table(pipe_dict, crown_depths, surcharge_pressure)
 
-# --- Main App Logic ---
-pipe_data = make_pipe_dict(diameters, sdr11, sdr17)
+    st.success("✅ Summary generated.")
+    st.dataframe(df, use_container_width=True)
 
-if st.button("Run Design Checks"):
-    with st.spinner("Calculating..."):
-        df = calculate_all_checks(pipe_data, crown_depths, surcharge_pressure)
-    
-    st.success("✅ Calculations completed.")
-    
-    # Display results in a more organized way
-    st.subheader("Design Results Summary")
-    
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Detailed Results", "Summary by Diameter"])
-    
-    with tab1:
-        st.dataframe(df)
-    
-    with tab2:
-        # Pivot the data for a better summary view
-        summary_df = df.pivot_table(
-            index=["Diameter (mm)", "SDR Type"],
-            columns="Crown Depth (m)",
-            values="Overall Status",
-            aggfunc='first'
-        )
-        st.dataframe(summary_df)
-    
     # Excel Export with error handling
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            # Main results sheet
             df.to_excel(writer, index=False, sheet_name="Summary Results")
-            
-            # Additional sheets with detailed calculations
-            summary_df.to_excel(writer, sheet_name="Summary by Diameter")
-            
+
+            # Optional additional summary
+            grouped = df.copy()
+            grouped.to_excel(writer, sheet_name="Summary by Diameter", index=False)
+
             # Parameters sheet
             params_df = pd.DataFrame({
                 "Parameter": [
@@ -240,9 +146,9 @@ if st.button("Run Design Checks"):
                 ],
                 "Value": [
                     "PE100", "S2 (90% compaction)", f"{params['soil_modulus']} MN/m²",
-                    f"{params['embed_modulus']} MN/m²", "BS9295:2020", f"{params['oval_limit']}%",
-                    f"{INITIAL_OVAL[0]}%", f"{INITIAL_OVAL[1]}%", 
-                    f"{int((1 - params['perforation_red']) * 100)}%", f"{DEFAULT_LONG_MODULUS} MPa",
+                    f"{params['embed_modulus']} MN/m²", "BS9295:2020", f"{params['oval_limit']}",
+                    f"{INITIAL_OVAL[1]}", f"{INITIAL_OVAL[0]}", 
+                    f"{params['perforation_red']}", f"{DEFAULT_LONG_MODULUS} MPa",
                     f"{DEFAULT_SHORT_MODULUS} MPa", f"{DEFAULT_WATER_DENSITY} kN/m³",
                     f"{DEFAULT_SOIL_DENSITY} kN/m³", f"{DEFAULT_GAMMA_UF}",
                     f"{DEFAULT_GAMMA_F}", f"{DEFAULT_BUCKLING_MIN_SAFE}",
@@ -251,7 +157,7 @@ if st.button("Run Design Checks"):
             })
 
             params_df.to_excel(writer, index=False, sheet_name="Design Parameters")
-            
+
         st.download_button(
             "📥 Download Full Excel Report",
             data=buffer.getvalue(),
@@ -266,6 +172,7 @@ if st.button("Run Design Checks"):
             file_name="Pipe_Design_Results.csv",
             mime="text/csv"
         )
+
 
 # git commands to save changes
 
