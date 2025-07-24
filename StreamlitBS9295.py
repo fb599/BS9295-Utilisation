@@ -109,8 +109,11 @@ def calculate_table(pipe_dict, depths, surcharges):
                 total_pressure = DEFAULT_SOIL_DENSITY * depth + surcharge
                 stiff_kN = stiffness * 1000
                 utilisation = calculate_utilisation(total_pressure, stiff_kN, E_eff, sdr_idx)
+                
+                # Apply scale, cap, and formatting
+                utilisation_percent = min(utilisation * 100, 100.0)
                 col_name = f"{dia} SDR{sdr_type[-2:]}"
-                row_data[col_name] = round(utilisation, 2)
+                row_data[col_name] = f"{utilisation_percent:.2f}"
         rows.append(row_data)
     return pd.DataFrame(rows)
 
@@ -123,22 +126,14 @@ if st.button("Generate Summary Table"):
     st.success("✅ Summary generated.")
     st.dataframe(df, use_container_width=True)
 
-        # Excel Export with error handling
+    # Excel Export with error handling
     try:
         buffer = BytesIO()
-
-        # Create a copy of df with utilisation values formatted
-        export_df = df.copy()
-        for col in export_df.columns:
-            if "SDR" in col:
-                export_df[col] = export_df[col].apply(lambda x: f"{min(x * 100, 100.00):.2f}")
-
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False, sheet_name="Summary Results")
+            df.to_excel(writer, index=False, sheet_name="Summary Results")
 
             # Optional additional summary
-            grouped = export_df.copy()
-            grouped.to_excel(writer, sheet_name="Summary by Diameter", index=False)
+            df.to_excel(writer, sheet_name="Summary by Diameter", index=False)
 
             # Parameters sheet
             params_df = pd.DataFrame({
@@ -180,10 +175,11 @@ if st.button("Generate Summary Table"):
             mime="text/csv"
         )
 
+
 # git commands to save changes
 
 # git add .
 # git commit -m "Added adjustable parameters to Streamlit app and improved export functionality"
 # git push
 
-st.write("Note: 101(%) Overall Utilisation Denotes Failure")
+st.write("Note: 100(%) Overall Utilisation Denotes Failure")
