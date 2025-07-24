@@ -222,4 +222,4 @@ if st.button("Run Design Checks"):
 # git commit -m "Added adjustable parameters to Streamlit app and improved export functionality"
 # git push
 
-# --- Footer ---
+#  Streamlit sync
