@@ -123,14 +123,21 @@ if st.button("Generate Summary Table"):
     st.success("✅ Summary generated.")
     st.dataframe(df, use_container_width=True)
 
-    # Excel Export with error handling
+        # Excel Export with error handling
     try:
         buffer = BytesIO()
+
+        # Create a copy of df with utilisation values formatted
+        export_df = df.copy()
+        for col in export_df.columns:
+            if "SDR" in col:
+                export_df[col] = export_df[col].apply(lambda x: f"{min(x * 100, 100.00):.2f}")
+
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name="Summary Results")
+            export_df.to_excel(writer, index=False, sheet_name="Summary Results")
 
             # Optional additional summary
-            grouped = df.copy()
+            grouped = export_df.copy()
             grouped.to_excel(writer, sheet_name="Summary by Diameter", index=False)
 
             # Parameters sheet
