@@ -43,15 +43,13 @@ PIPE_WEIGHTS = {
 diameters = [110, 125, 160, 180, 200, 225, 250, 280, 315, 355, 400, 450, 500, 560, 630]
 sdr11 = [10.0, 11.4, 14.6, 16.4, 18.2, 20.5, 22.8, 25.5, 28.7, 32.3, 36.4, 40.9, 45.4, 50.8, 57.2]
 sdr17 = [6.3, 7.1, 9.1, 10.2, 11.4, 12.8, 14.2, 15.9, 17.9, 20.1, 22.7, 25.5, 28.3, 31.7, 35.7]
-
 crown_depths = [0.675, 0.775, 0.875, 0.975, 1.075, 1.175, 1.275, 1.375, 1.575, 1.775, 1.975, 2.175, 2.675, 3.175]
 surcharge_pressure = [690, 480, 340, 245, 185, 140, 110, 95, 75, 65, 50, 40, 25, 15]
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="PE Pipe Design Summary", layout="wide")
-st.title("PE80/100 SDR11/17 Pipe Design Summary Table")
+st.set_page_config(page_title="PE Pipe Design Checker", layout="wide")
+st.title("PE100 SDR11/17 Pipe Design Calculator")
 
-# --- Sidebar Parameters ---
 with st.sidebar:
     st.header("Design Parameters")
     params = {
@@ -62,14 +60,18 @@ with st.sidebar:
         "perforation_red": st.number_input("Perforation Reduction Factor", value=DEFAULT_PERFORATION_RED)
     }
 
-# --- Helper Functions ---
-def make_pipe_dict(diams, s11, s17): return {d: [s11[i], s17[i]] for i, d in enumerate(diams)}
-def get_pipe_weight(diameter, sdr_type): return PIPE_WEIGHTS.get((diameter, sdr_type), 0.16 if sdr_type=="SDR17" else 0.25)
+def make_pipe_dict(diams, s11, s17):
+    return {d: [s11[i], s17[i]] for i, d in enumerate(diams)}
+
+def get_pipe_weight(diameter, sdr_type):
+    return PIPE_WEIGHTS.get((diameter, sdr_type), 0.16 if sdr_type=="SDR17" else 0.25)
+
 def pipe_stiffness(OD, t, modulus, perforated=True):
     MD = OD - t
     I = t**3 / 12
     base = (modulus * I) / (MD**3)
-    return base * DEFAULT_PERFORATION_RED if perforated else base * 1.0
+    return base * DEFAULT_PERFORATION_RED if perforated else base
+
 def leonhardt_factor(B_trench, D_pipe, E_soil, E_embed):
     ratio = B_trench / D_pipe
     num = 0.985 + 0.544 * ratio
@@ -85,53 +87,52 @@ def calculate_flotation(dia, depth, pipe_weight, invert_level=None):
     return UPL/W_total
 
 def calculate_all_checks(pipe_dict, depths, surcharges):
-    results = []
-    for dia, (thk11, thk17) in pipe_dict.items():
+    rows = []
+    for dia, (t11, t17) in pipe_dict.items():
         trench_width = dia + 300
         C_L = leonhardt_factor(trench_width, dia, params["soil_modulus"], params["embed_modulus"])
         E_eff = params["embed_modulus"] * C_L * 1000
-        for sdr_idx, thickness in enumerate([thk11, thk17]):
-            sdr_type = "SDR11" if sdr_idx==0 else "SDR17"
-            pipe_weight = get_pipe_weight(dia, sdr_type)
-            stiff_val = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS)
-            stiff_kN = stiff_val * 1000
-            stiff_buck_short = pipe_stiffness(dia, thickness, DEFAULT_SHORT_MODULUS, perforated=False)
-            stiff_buck_long = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS, perforated=False)
-            for i, depth in enumerate(depths):
-                surcharge = surcharges[i]
-                soil_pressure = DEFAULT_SOIL_DENSITY * depth
-                total_pressure = soil_pressure + surcharge
-                oval_percent = (DEFAULT_DEFLECTION_COEFF * DEFAULT_DEFLECTION_LAG * total_pressure)/(8*stiff_kN + 0.061*E_eff)*100 + INITIAL_OVAL[sdr_idx]
-                oval_util = oval_percent/params["oval_limit"]
-                flotation_util = calculate_flotation(dia, depth, pipe_weight)/1.0
-                buckling_air_util = 0
+        for sdr_idx, thickness in enumerate([t11, t17]):
+            sdr = "SDR11" if sdr_idx==0 else "SDR17"
+            pw = get_pipe_weight(dia, sdr)
+            stiff_long = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS)
+            stiff_kN = stiff_long * 1000
+            stiff_short = pipe_stiffness(dia, thickness, DEFAULT_SHORT_MODULUS, perforated=False)
+            stiff_long_no = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS, perforated=False)
+            for idx, depth in enumerate(depths):
+                surcharge = surcharges[idx]
+                soil_p = DEFAULT_SOIL_DENSITY * depth
+                total_p = soil_p + surcharge
+                oval_pct = (DEFAULT_DEFLECTION_COEFF * DEFAULT_DEFLECTION_LAG * total_p)/(8*stiff_kN + 0.061*E_eff)*100 + INITIAL_OVAL[sdr_idx]
+                oval_util = oval_pct/params["oval_limit"]
+                float_util = calculate_flotation(dia, depth, pw)
+                air_util = 0
                 if depth < 1.5:
-                    P_cr_a = 24 * stiff_buck_short * 1000
-                    FOS_air = P_cr_a/(soil_pressure + surcharge)
-                    buckling_air_util = DEFAULT_BUCKLING_MIN_SAFE_AIR / FOS_air
-                P_cr_short = 0.6*(E_eff/1000)**0.67 * stiff_buck_short**0.33
-                P_cr_long = 0.6*(E_eff/1000)**0.67 * stiff_buck_long**0.33
-                FOS_soil = 1/(soil_pressure/(P_cr_long*1000) + surcharge/(P_cr_short*1000))
-                buckling_soil_util = DEFAULT_BUCKLING_MIN_SAFE / FOS_soil
-                checks = [oval_util, flotation_util, buckling_soil_util] + ([buckling_air_util] if depth<1.5 else [])
-                max_util = max(checks)
-                overall = min(max_util*100, 100.0)
-                results.append({
+                    Pcr_a = 24 * stiff_short * 1000
+                    FOSa = Pcr_a/(soil_p + surcharge)
+                    air_util = DEFAULT_BUCKLING_MIN_SAFE_AIR / FOSa
+                Pcr_s = 0.6*(E_eff/1000)**0.67 * stiff_short**0.33
+                Pcr_l = 0.6*(E_eff/1000)**0.67 * stiff_long_no**0.33
+                FOSs = 1/(soil_p/(Pcr_l*1000) + surcharge/(Pcr_s*1000))
+                soil_util = DEFAULT_BUCKLING_MIN_SAFE / FOSs
+                util_list = [oval_util, float_util, soil_util] + ([air_util] if depth<1.5 else [])
+                overall = min(max(util_list)*100, 100.0)
+                rows.append({
                     "Diameter (mm)": dia,
-                    "SDR Type": sdr_type,
+                    "SDR Type": sdr,
                     "Crown Depth (m)": depth,
                     "Overall Utilisation (%)": overall
                 })
-    return pd.DataFrame(results)
-
+    return pd.DataFrame(rows)
+    
 # --- Main Execution ---
 if st.button("Generate Summary Table"):
     with st.spinner("Calculating utilisation..."):
         pipe_dict = make_pipe_dict(diameters, sdr11, sdr17)
-        df = calculate_table(pipe_dict, crown_depths, surcharge_pressure)
+        df = calculate_all_checks(pipe_dict, crown_depths, surcharge_pressure)
 
     st.success("✅ Summary generated.")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df.style.format({"Overall Utilisation (%)": "{:.2f}"}), use_container_width=True)
 
     # Excel Export with error handling
     try:
@@ -139,8 +140,13 @@ if st.button("Generate Summary Table"):
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name="Summary Results")
 
-            # Optional additional summary
-            df.to_excel(writer, sheet_name="Summary by Diameter", index=False)
+            # Optional grouped summary
+            summary_by_diameter = df.groupby("Diameter (mm)").agg({
+                "Overall Utilisation (%)": ["mean", "max"]
+            }).round(2)
+            summary_by_diameter.columns = ['Mean Utilisation (%)', 'Max Utilisation (%)']
+            summary_by_diameter.reset_index(inplace=True)
+            summary_by_diameter.to_excel(writer, sheet_name="Summary by Diameter", index=False)
 
             # Parameters sheet
             params_df = pd.DataFrame({
@@ -149,7 +155,7 @@ if st.button("Generate Summary Table"):
                     "Embedment Modulus", "Design Standard", "Ovalisation Limit",
                     "Initial Ovalisation (SDR11)", "Initial Ovalisation (SDR17)",
                     "Perforation Reduction", "Long-term Modulus", "Short-term Modulus",
-                    "Water Density", "Soil Density", "Uplift Partial Factor (unfav)",
+                    "Water Density", "Soil Density", "Uplift Partial Factor (unfav)", 
                     "Uplift Partial Factor (fav)", "Buckling FOS (soil)", 
                     "Buckling FOS (air)", "Min Tamping Depth"
                 ],
@@ -182,11 +188,5 @@ if st.button("Generate Summary Table"):
             mime="text/csv"
         )
 
-
-# git commands to save changes
-
-# git add .
-# git commit -m "Added adjustable parameters to Streamlit app and improved export functionality"
-# git push
-
 st.write("Note: 100(%) Overall Utilisation Denotes Failure")
+
