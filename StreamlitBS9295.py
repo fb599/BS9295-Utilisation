@@ -128,34 +128,30 @@ def calculate_all_checks(pipe_dict, depths, surcharges):
 # --- Main Execution ---
 if st.button("Generate Summary Table"):
     with st.spinner("Calculating utilisation..."):
-        pipe_dict = make_pipe_dict(diameters, sdr11, sdr17)
-        df = calculate_all_checks(pipe_dict, crown_depths, surcharge_pressure)
+        pipe_dict = make_pipe_dict(diameters=sdr11 + sdr17, sdr11=sdr11, sdr17=sdr17)
+        df = calculate_table(pipe_dict, crown_depths, surcharge_pressure)
 
     st.success("✅ Summary generated.")
-    st.dataframe(df.style.format({"Overall Utilisation (%)": "{:.2f}"}), use_container_width=True)
+    st.dataframe(df, use_container_width=True)
 
-    # Excel Export with error handling
+    # Excel Export
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name="Summary Results")
 
-            # Optional grouped summary
-            summary_by_diameter = df.groupby("Diameter (mm)").agg({
-                "Overall Utilisation (%)": ["mean", "max"]
-            }).round(2)
-            summary_by_diameter.columns = ['Mean Utilisation (%)', 'Max Utilisation (%)']
-            summary_by_diameter.reset_index(inplace=True)
-            summary_by_diameter.to_excel(writer, sheet_name="Summary by Diameter", index=False)
+            # Optional: diameter summary by transposing
+            transposed = df.set_index("Crown Depth (m)").T
+            transposed.to_excel(writer, sheet_name="Summary by Diameter")
 
-            # Parameters sheet
+            # Design Parameters
             params_df = pd.DataFrame({
                 "Parameter": [
                     "Pipe Material", "Bedding Class", "Native Soil Modulus", 
                     "Embedment Modulus", "Design Standard", "Ovalisation Limit",
                     "Initial Ovalisation (SDR11)", "Initial Ovalisation (SDR17)",
                     "Perforation Reduction", "Long-term Modulus", "Short-term Modulus",
-                    "Water Density", "Soil Density", "Uplift Partial Factor (unfav)", 
+                    "Water Density", "Soil Density", "Uplift Partial Factor (unfav)",
                     "Uplift Partial Factor (fav)", "Buckling FOS (soil)", 
                     "Buckling FOS (air)", "Min Tamping Depth"
                 ],
@@ -170,7 +166,6 @@ if st.button("Generate Summary Table"):
                     f"{DEFAULT_BUCKLING_MIN_SAFE_AIR}", f"{DEFAULT_TAMPING_DEPTH} m"
                 ]
             })
-
             params_df.to_excel(writer, index=False, sheet_name="Design Parameters")
 
         st.download_button(
@@ -189,4 +184,3 @@ if st.button("Generate Summary Table"):
         )
 
 st.write("Note: 100(%) Overall Utilisation Denotes Failure")
-
