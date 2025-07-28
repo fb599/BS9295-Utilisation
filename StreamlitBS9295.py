@@ -131,6 +131,15 @@ if st.button("Generate Summary Table"):
         pipe_dict = make_pipe_dict(diameters, sdr11, sdr17)
         df = calculate_all_checks(pipe_dict, crown_depths, surcharge_pressure)
 
+        df_sdr11 = df[df["SDR Type"] == "SDR11"].pivot(
+            index="Crown Depth (m)", columns="Diameter (mm)", values="Overall Utilisation (%)"
+        )
+
+        df_sdr17 = df[df["SDR Type"] == "SDR17"].pivot(
+            index="Crown Depth (m)", columns="Diameter (mm)", values="Overall Utilisation (%)"
+        )
+
+
     st.success("✅ Summary generated.")
     st.dataframe(df, use_container_width=True)
 
@@ -138,11 +147,11 @@ if st.button("Generate Summary Table"):
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name="Summary Results")
+            df_sdr11.to_excel(writer, sheet_name="SDR11 Results")
+            df_sdr17.to_excel(writer, sheet_name="SDR17 Results")
 
-            # Optional: diameter summary by transposing
-            transposed = df.set_index("Crown Depth (m)").T
-            transposed.to_excel(writer, sheet_name="Summary by Diameter")
+            # Optionally add full long-form data for reference
+            df.to_excel(writer, index=False, sheet_name="Long Table (Raw Data)")
 
             # Design Parameters
             params_df = pd.DataFrame({
