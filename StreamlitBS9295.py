@@ -128,7 +128,7 @@ def calculate_all_checks(pipe_dict, depths, surcharges):
 # --- Main Execution ---
 if st.button("Generate Summary Table"):
     with st.spinner("Calculating utilisation..."):
-        pipe_dict = make_pipe_dict(diameters=sdr11 + sdr17, sdr11=sdr11, sdr17=sdr17)
+        pipe_dict = make_pipe_dict(diameters, sdr11, sdr17)
         df = calculate_table(pipe_dict, crown_depths, surcharge_pressure)
 
     st.success("✅ Summary generated.")
