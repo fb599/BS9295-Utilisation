@@ -131,58 +131,70 @@ if st.button("Generate Summary Table"):
         pipe_dict = make_pipe_dict(diameters, sdr11, sdr17)
         df = calculate_all_checks(pipe_dict, crown_depths, surcharge_pressure)
 
+        # Step 1: Pivot SDR11 and SDR17 separately
         df_sdr11 = df[df["SDR Type"] == "SDR11"].pivot(
             index="Crown Depth (m)", columns="Diameter (mm)", values="Overall Utilisation (%)"
         )
-
         df_sdr17 = df[df["SDR Type"] == "SDR17"].pivot(
             index="Crown Depth (m)", columns="Diameter (mm)", values="Overall Utilisation (%)"
         )
 
+        # Step 2: Combine column names (e.g., "110 SDR11", "110 SDR17", etc.)
+        df_combined = pd.DataFrame(index=df_sdr11.index)
+        for dia in diameters:
+            col11 = df_sdr11.get(dia)
+            col17 = df_sdr17.get(dia)
+            if col11 is not None:
+                df_combined[f"{dia} SDR11"] = col11
+            if col17 is not None:
+                df_combined[f"{dia} SDR17"] = col17
+
 
     st.success("✅ Summary generated.")
-    st.dataframe(df, use_container_width=True)
+    st.subheader("Combined Utilisation Table (SDR11 & SDR17)")
+    st.dataframe(df_combined.style.format("{:.1f}"), use_container_width=True)
 
-    # Excel Export
-    try:
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_sdr11.to_excel(writer, sheet_name="SDR11 Results")
-            df_sdr17.to_excel(writer, sheet_name="SDR17 Results")
+# 📤 Excel Export
+try:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        # Export combined table first
+        df_combined.to_excel(writer, sheet_name="Combined Summary")
 
-            # Optionally add full long-form data for reference
-            df.to_excel(writer, index=False, sheet_name="Long Table (Raw Data)")
+        # Export long-form raw data
+        df.to_excel(writer, index=False, sheet_name="Long Table (Raw Data)")
 
-            # Design Parameters
-            params_df = pd.DataFrame({
-                "Parameter": [
-                    "Pipe Material", "Bedding Class", "Native Soil Modulus", 
-                    "Embedment Modulus", "Design Standard", "Ovalisation Limit",
-                    "Initial Ovalisation (SDR11)", "Initial Ovalisation (SDR17)",
-                    "Perforation Reduction", "Long-term Modulus", "Short-term Modulus",
-                    "Water Density", "Soil Density", "Uplift Partial Factor (unfav)",
-                    "Uplift Partial Factor (fav)", "Buckling FOS (soil)", 
-                    "Buckling FOS (air)", "Min Tamping Depth"
-                ],
-                "Value": [
-                    "PE100", "S2 (90% compaction)", f"{params['soil_modulus']} MN/m²",
-                    f"{params['embed_modulus']} MN/m²", "BS9295:2020", f"{params['oval_limit']}",
-                    f"{INITIAL_OVAL[1]}", f"{INITIAL_OVAL[0]}", 
-                    f"{params['perforation_red']}", f"{DEFAULT_LONG_MODULUS} MPa",
-                    f"{DEFAULT_SHORT_MODULUS} MPa", f"{DEFAULT_WATER_DENSITY} kN/m³",
-                    f"{DEFAULT_SOIL_DENSITY} kN/m³", f"{DEFAULT_GAMMA_UF}",
-                    f"{DEFAULT_GAMMA_F}", f"{DEFAULT_BUCKLING_MIN_SAFE}",
-                    f"{DEFAULT_BUCKLING_MIN_SAFE_AIR}", f"{DEFAULT_TAMPING_DEPTH} m"
-                ]
-            })
-            params_df.to_excel(writer, index=False, sheet_name="Design Parameters")
+        # Export design parameters
+        params_df = pd.DataFrame({
+            "Parameter": [
+                "Pipe Material", "Bedding Class", "Native Soil Modulus", 
+                "Embedment Modulus", "Design Standard", "Ovalisation Limit",
+                "Initial Ovalisation (SDR11)", "Initial Ovalisation (SDR17)",
+                "Perforation Reduction", "Long-term Modulus", "Short-term Modulus",
+                "Water Density", "Soil Density", "Uplift Partial Factor (unfav)",
+                "Uplift Partial Factor (fav)", "Buckling FOS (soil)", 
+                "Buckling FOS (air)", "Min Tamping Depth"
+            ],
+            "Value": [
+                "PE100", "S2 (90% compaction)", f"{params['soil_modulus']} MN/m²",
+                f"{params['embed_modulus']} MN/m²", "BS9295:2020", f"{params['oval_limit']}",
+                f"{INITIAL_OVAL[1]}", f"{INITIAL_OVAL[0]}", 
+                f"{params['perforation_red']}", f"{DEFAULT_LONG_MODULUS} MPa",
+                f"{DEFAULT_SHORT_MODULUS} MPa", f"{DEFAULT_WATER_DENSITY} kN/m³",
+                f"{DEFAULT_SOIL_DENSITY} kN/m³", f"{DEFAULT_GAMMA_UF}",
+                f"{DEFAULT_GAMMA_F}", f"{DEFAULT_BUCKLING_MIN_SAFE}",
+                f"{DEFAULT_BUCKLING_MIN_SAFE_AIR}", f"{DEFAULT_TAMPING_DEPTH} m"
+            ]
+        })
+        params_df.to_excel(writer, index=False, sheet_name="Design Parameters")
 
-        st.download_button(
-            "📥 Download Full Excel Report",
-            data=buffer.getvalue(),
-            file_name="Pipe_Design_Results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # Streamlit download button
+    st.download_button(
+        "📥 Download Full Excel Report",
+        data=buffer.getvalue(),
+        file_name="Pipe_Design_Results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
     except Exception as e:
         st.error(f"Excel export failed: {str(e)}. Showing data as CSV instead.")
         st.download_button(
