@@ -63,59 +63,66 @@ with st.sidebar:
     }
 
 # --- Helper Functions ---
-def make_pipe_dict(diams, s11, s17):
-    return {d: [s11[i], s17[i]] for i, d in enumerate(diams)}
-
-def get_pipe_weight(diameter, sdr_type):
-    return PIPE_WEIGHTS.get((diameter, sdr_type), 0.16 if sdr_type == "SDR17" else 0.25)
-
-def pipe_stiffness(OD, t, modulus):
+def make_pipe_dict(diams, s11, s17): return {d: [s11[i], s17[i]] for i, d in enumerate(diams)}
+def get_pipe_weight(diameter, sdr_type): return PIPE_WEIGHTS.get((diameter, sdr_type), 0.16 if sdr_type=="SDR17" else 0.25)
+def pipe_stiffness(OD, t, modulus, perforated=True):
     MD = OD - t
     I = t**3 / 12
-    stiffness_val = (modulus * I) / (MD**3)
-    return stiffness_val * params["perforation_red"]
-
+    base = (modulus * I) / (MD**3)
+    return base * DEFAULT_PERFORATION_RED if perforated else base * 1.0
 def leonhardt_factor(B_trench, D_pipe, E_soil, E_embed):
     ratio = B_trench / D_pipe
     num = 0.985 + 0.544 * ratio
     denom = (1.985 - 0.456 * ratio) * (E_soil / E_embed) - (1 - ratio)
-    return num / denom if denom != 0 else 1.0
+    return num/denom if denom != 0 else 1.0
 
-def calculate_utilisation(total_pressure, stiffness, E_eff, sdr_idx):
-    numerator = DEFAULT_DEFLECTION_COEFF * params["deflection_lag"] * total_pressure
-    denominator = 8 * stiffness + 0.061 * E_eff
-    dynamic_oval = (numerator / denominator) * 100
-    total_oval = INITIAL_OVAL[sdr_idx] + dynamic_oval
-    utilisation = total_oval / params["oval_limit"]
-    return utilisation
+def calculate_flotation(dia, depth, pipe_weight, invert_level=None):
+    OD_m = dia / 1000
+    W_soil = DEFAULT_SOIL_DENSITY * depth * OD_m
+    W_total = DEFAULT_GAMMA_F * (pipe_weight + W_soil)
+    H_w = invert_level if invert_level is not None else depth + OD_m/2
+    UPL = DEFAULT_GAMMA_UF * DEFAULT_WATER_DENSITY * H_w * OD_m
+    return UPL/W_total
 
-def calculate_table(pipe_dict, depths, surcharges):
-    rows = []
-    for i, depth in enumerate(depths):
-        surcharge = surcharges[i]
-        row_data = {
-            "Crown Depth (m)": depth,
-            "Below Sleeper (m)": round(depth - 0.175, 2),
-            "Tamping Safe": "YES" if depth >= DEFAULT_TAMPING_DEPTH else "NO",
-            "Surcharge (kN/m²)": surcharge
-        }
-        for dia, (sdr11_thk, sdr17_thk) in pipe_dict.items():
-            for sdr_idx, thickness in enumerate([sdr17_thk, sdr11_thk]):
-                sdr_type = "SDR17" if sdr_idx == 0 else "SDR11"
-                trench_width = dia + 300
-                stiffness = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS)
-                C_L = leonhardt_factor(trench_width, dia, params["soil_modulus"], params["embed_modulus"])
-                E_eff = params["embed_modulus"] * C_L * 1000
-                total_pressure = DEFAULT_SOIL_DENSITY * depth + surcharge
-                stiff_kN = stiffness * 1000
-                utilisation = calculate_utilisation(total_pressure, stiff_kN, E_eff, sdr_idx)
-                
-                # Apply scale, cap, and formatting
-                utilisation_percent = min(utilisation * 100, 100.0)
-                col_name = f"{dia} SDR{sdr_type[-2:]}"
-                row_data[col_name] = f"{utilisation_percent:.2f}"
-        rows.append(row_data)
-    return pd.DataFrame(rows)
+def calculate_all_checks(pipe_dict, depths, surcharges):
+    results = []
+    for dia, (thk11, thk17) in pipe_dict.items():
+        trench_width = dia + 300
+        C_L = leonhardt_factor(trench_width, dia, params["soil_modulus"], params["embed_modulus"])
+        E_eff = params["embed_modulus"] * C_L * 1000
+        for sdr_idx, thickness in enumerate([thk11, thk17]):
+            sdr_type = "SDR11" if sdr_idx==0 else "SDR17"
+            pipe_weight = get_pipe_weight(dia, sdr_type)
+            stiff_val = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS)
+            stiff_kN = stiff_val * 1000
+            stiff_buck_short = pipe_stiffness(dia, thickness, DEFAULT_SHORT_MODULUS, perforated=False)
+            stiff_buck_long = pipe_stiffness(dia, thickness, DEFAULT_LONG_MODULUS, perforated=False)
+            for i, depth in enumerate(depths):
+                surcharge = surcharges[i]
+                soil_pressure = DEFAULT_SOIL_DENSITY * depth
+                total_pressure = soil_pressure + surcharge
+                oval_percent = (DEFAULT_DEFLECTION_COEFF * DEFAULT_DEFLECTION_LAG * total_pressure)/(8*stiff_kN + 0.061*E_eff)*100 + INITIAL_OVAL[sdr_idx]
+                oval_util = oval_percent/params["oval_limit"]
+                flotation_util = calculate_flotation(dia, depth, pipe_weight)/1.0
+                buckling_air_util = 0
+                if depth < 1.5:
+                    P_cr_a = 24 * stiff_buck_short * 1000
+                    FOS_air = P_cr_a/(soil_pressure + surcharge)
+                    buckling_air_util = DEFAULT_BUCKLING_MIN_SAFE_AIR / FOS_air
+                P_cr_short = 0.6*(E_eff/1000)**0.67 * stiff_buck_short**0.33
+                P_cr_long = 0.6*(E_eff/1000)**0.67 * stiff_buck_long**0.33
+                FOS_soil = 1/(soil_pressure/(P_cr_long*1000) + surcharge/(P_cr_short*1000))
+                buckling_soil_util = DEFAULT_BUCKLING_MIN_SAFE / FOS_soil
+                checks = [oval_util, flotation_util, buckling_soil_util] + ([buckling_air_util] if depth<1.5 else [])
+                max_util = max(checks)
+                overall = min(max_util*100, 100.0)
+                results.append({
+                    "Diameter (mm)": dia,
+                    "SDR Type": sdr_type,
+                    "Crown Depth (m)": depth,
+                    "Overall Utilisation (%)": overall
+                })
+    return pd.DataFrame(results)
 
 # --- Main Execution ---
 if st.button("Generate Summary Table"):
