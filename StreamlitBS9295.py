@@ -195,13 +195,13 @@ try:
         file_name="Pipe_Design_Results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    except Exception as e:
-        st.error(f"Excel export failed: {str(e)}. Showing data as CSV instead.")
-        st.download_button(
-            "📥 Download CSV",
-            data=df.to_csv(index=False).encode('utf-8'),
-            file_name="Pipe_Design_Results.csv",
-            mime="text/csv"
-        )
+except Exception as e:
+    st.error(f"Excel export failed: {str(e)}. Showing data as CSV instead.")
+    st.download_button(
+        "📥 Download CSV",
+        data=df.to_csv(index=False).encode('utf-8'),
+        file_name="Pipe_Design_Results.csv",
+        mime="text/csv"
+    )
 
 st.write("Note: 100(%) Overall Utilisation Denotes Failure")
